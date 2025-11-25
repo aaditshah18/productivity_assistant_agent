@@ -1,167 +1,184 @@
+import asyncio
+import os
 import json
-import subprocess
-from typing import Optional, Any
+from anthropic import Anthropic
+from typing import Any, List, Dict
+from mcp import ClientSession, StdioServerParameters
+from mcp.client.stdio import stdio_client
 from dotenv import load_dotenv
+import logging
 
 load_dotenv()
 
-class MCPClient:
-    """Client to interact with MCP servers directly via stdio"""
+# Configure logging for the module
+logger = logging.getLogger(__name__)
+logger.setLevel(logging.INFO) # Default level, can be configured higher in main.py
+
+
+class MCPClient: # Renamed from MCPAgent
+    """Client that uses MCP tools to interact with Calendar and Gmail."""
     
     def __init__(self):
-        self.calendar_mcp_path = "/Users/aaditshah/ReKnew/productivity-assistant/productivity_assistant/mcp_servers/calendar_mcp.py"
-        self.mcp_bin = "/Users/aaditshah/ReKnew/productivity-assistant/.venv/bin/mcp"
+        self.anthropic_client = Anthropic(api_key=os.getenv("ANTHROPIC_API_KEY"))
+        self.mcp_sessions = {}
+        self.messages = []
         
-    def _call_mcp_tool(self, tool_name: str, arguments: dict) -> Any:
-        """
-        Call an MCP tool directly via stdio protocol
-        """
+    async def initialize(self):
+        """Initialize connections to MCP servers."""
+        logger.info("Initializing MCP servers...")
+        
+        # Initialize Calendar MCP
         try:
-            # Start MCP server process
-            process = subprocess.Popen(
-                [self.mcp_bin, "run", self.calendar_mcp_path],
-                stdin=subprocess.PIPE,
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                text=True,
-                bufsize=1
+            calendar_params = StdioServerParameters(
+                command="python",
+                args=["-m", "productivity_assistant.servers.calendar_server"],
+                env=None
             )
             
-            # Initialize the server
-            init_request = {
-                "jsonrpc": "2.0",
-                "id": 1,
-                "method": "initialize",
-                "params": {
-                    "protocolVersion": "2024-11-05",
-                    "capabilities": {},
-                    "clientInfo": {"name": "productivity-assistant", "version": "1.0"}
-                }
+            calendar_client = stdio_client(calendar_params)
+            calendar_read, calendar_write = await calendar_client.__aenter__()
+            calendar_session = ClientSession(calendar_read, calendar_write)
+            await asyncio.wait_for(calendar_session.initialize(), timeout=10.0)
+            self.mcp_sessions['calendar'] = {
+                'session': calendar_session,
+                'client': calendar_client
             }
-            
-            process.stdin.write(json.dumps(init_request) + "\n")
-            process.stdin.flush()
-            
-            # Read initialization response (skip for now)
-            init_line = process.stdout.readline()
-            print(f"Init response: {init_line.strip()}")
-            
-            # Send initialized notification
-            init_notification = {
-                "jsonrpc": "2.0",
-                "method": "notifications/initialized"
-            }
-            process.stdin.write(json.dumps(init_notification) + "\n")
-            process.stdin.flush()
-            
-            # Call the tool
-            tool_request = {
-                "jsonrpc": "2.0",
-                "id": 2,
-                "method": "tools/call",
-                "params": {
-                    "name": tool_name,
-                    "arguments": arguments
-                }
-            }
-            
-            print(f"Calling tool: {tool_name} with args: {arguments}")
-            process.stdin.write(json.dumps(tool_request) + "\n")
-            process.stdin.flush()
-            
-            # Read tool response
-            response_line = process.stdout.readline()
-            print(f"Tool response: {response_line.strip()}")
-            
-            # Clean up
-            process.stdin.close()
-            process.terminate()
-            try:
-                process.wait(timeout=2)
-            except subprocess.TimeoutExpired:
-                process.kill()
-            
-            if response_line:
-                response_data = json.loads(response_line)
-                if "result" in response_data:
-                    result = response_data["result"]
-                    
-                    # Check if result has content array
-                    if isinstance(result, dict) and "content" in result:
-                        content = result["content"]
-                        if isinstance(content, list) and len(content) > 0:
-                            # Extract text from first content block
-                            first_block = content[0]
-                            if isinstance(first_block, dict) and first_block.get("type") == "text":
-                                text = first_block.get("text", "")
-                                try:
-                                    return json.loads(text)
-                                except:
-                                    return {"status": "success", "message": text}
-                    
-                    return result
-                elif "error" in response_data:
-                    return {"status": "error", "message": response_data["error"]["message"]}
-            
-            return {"status": "error", "message": "No response from MCP server"}
-            
+            logger.info("✓ Calendar MCP initialized")
         except Exception as e:
-            import traceback
-            print(f"Exception: {traceback.format_exc()}")
-            return {"status": "error", "message": str(e)}
-
-    def list_emails(self, max_results: int = 50) -> list[dict]:
-        """
-        Fetch recent emails from Gmail
-        """
-        # For now, return empty list since Gmail MCP isn't set up
-        print("Gmail MCP not yet implemented")
-        return []
-
-    def get_email_body(self, email_id: str) -> Optional[str]:
-        """
-        Fetch full email body for a specific email ID
-        """
-        print("Gmail MCP not yet implemented")
-        return None
+            breakpoint()
+            logger.error(f"✗ Failed to initialize Calendar MCP: {e}")
         
-    def create_calendar_event(self, summary: str, description: str, start_time: str, end_time: str, timezone: str = 'America/Los_Angeles') -> dict:
-        """
-        Create a calendar event in Google Calendar
-        """
-        return self._call_mcp_tool("create-calendar-event", {
-            "summary": summary,
-            "description": description,
-            "start_time": start_time,
-            "end_time": end_time,
-            "timezone": timezone
-        })
-
-    def list_calendar_events(self, max_results: int = 10, time_min: Optional[str] = None, time_max: Optional[str] = None) -> dict:
-        """
-        Lists upcoming calendar events
-        """
-        params = {"max_results": max_results}
-        if time_min:
-            params["time_min"] = time_min
-        if time_max:
-            params["time_max"] = time_max
+        # Initialize Gmail MCP
+        try:
+            gmail_params = StdioServerParameters(
+                command="python",
+                args=["-m", "productivity_assistant.servers.gmail_server"],
+                env=None
+            )
             
-        return self._call_mcp_tool("list-calendar-events", params)
-
-    def search_calendar_events(self, query: str, max_results: int = 10) -> dict:
-        """
-        Searches for calendar events matching a query
-        """
-        return self._call_mcp_tool("search-calendar-events", {
-            "query": query,
-            "max_results": max_results
+            gmail_client = stdio_client(gmail_params)
+            gmail_read, gmail_write = await gmail_client.__aenter__()
+            gmail_session = ClientSession(gmail_read, gmail_write)
+            await gmail_session.initialize()
+            self.mcp_sessions['gmail'] = {
+                'session': gmail_session,
+                'client': gmail_client
+            }
+            logger.info("✓ Gmail MCP initialized")
+        except Exception as e:
+            logger.error(f"✗ Failed to initialize Gmail MCP: {e}")
+    
+    async def get_available_tools(self) -> List[Dict[str, Any]]:
+        """Get all available tools from MCP servers in Anthropic format."""
+        anthropic_tools = []
+        
+        for server_name, server_data in self.mcp_sessions.items():
+            session = server_data['session']
+            try:
+                # List tools from MCP server
+                tools_result = await session.list_tools()
+                
+                # Convert MCP tool format to Anthropic tool format
+                for tool in tools_result.tools:
+                    anthropic_tool = {
+                        "name": tool.name,
+                        "description": tool.description or "",
+                        "input_schema": tool.inputSchema
+                    }
+                    # Tag with server name for routing
+                    anthropic_tool['_mcp_server'] = server_name
+                    anthropic_tools.append(anthropic_tool)
+                    
+            except Exception as e:
+                logger.error(f"Error getting tools from {server_name}: {e}")
+        
+        return anthropic_tools
+    
+    async def call_tool(self, tool_name: str, tool_input: Dict[str, Any], server_name: str) -> Any:
+        """Call a tool on the specified MCP server."""
+        if server_name not in self.mcp_sessions:
+            return {"error": f"MCP server '{server_name}' not found"}
+        
+        session = self.mcp_sessions[server_name]['session']
+        
+        try:
+            result = await session.call_tool(tool_name, tool_input)
+            return result.content
+        except Exception as e:
+            return {"error": f"Tool execution failed: {str(e)}"}
+    
+    async def chat(self, user_message: str) -> str:
+        """Send a message to Claude and handle tool use loop."""
+        self.messages.append({
+            "role": "user",
+            "content": user_message
         })
-
-    def delete_calendar_event(self, event_id: str) -> dict:
-        """
-        Deletes a calendar event by its ID
-        """
-        return self._call_mcp_tool("delete-calendar-event", {
-            "event_id": event_id
-        })
+        
+        tools = await self.get_available_tools()
+        
+        tools_for_claude = []
+        tool_server_map = {}
+        for tool in tools:
+            server_name = tool.pop('_mcp_server')
+            tool_server_map[tool['name']] = server_name
+            tools_for_claude.append(tool)
+        
+        while True:
+            # Call Claude
+            response = self.anthropic_client.messages.create(
+                model="claude-sonnet-4-20250514",
+                max_tokens=4096,
+                messages=self.messages,
+                tools=tools_for_claude
+            )
+            
+            # Add Claude's response to history
+            self.messages.append({
+                "role": "assistant",
+                "content": response.content
+            })
+            
+            # Check if Claude wants to use tools
+            tool_use_blocks = [block for block in response.content if block.type == "tool_use"]
+            
+            if not tool_use_blocks:
+                # No tools used, extract text response
+                text_blocks = [block.text for block in response.content if hasattr(block, 'text')]
+                return "\n".join(text_blocks) if text_blocks else "No response"
+            
+            # Process tool calls
+            tool_results = []
+            for tool_block in tool_use_blocks:
+                tool_name = tool_block.name
+                tool_input = tool_block.input
+                server_name = tool_server_map.get(tool_name)
+                
+                logger.info(f"🔧 Calling tool: {tool_name} on {server_name}")
+                logger.info(f"   Input: {json.dumps(tool_input, indent=2)}")
+                
+                # Execute the tool
+                result = await self.call_tool(tool_name, tool_input, server_name)
+                
+                logger.info(f"   Result: {json.dumps(result, indent=2)[:200]}...")
+                
+                # Add tool result to send back to Claude
+                tool_results.append({
+                    "type": "tool_result",
+                    "tool_use_id": tool_block.id,
+                    "content": json.dumps(result)
+                })
+            
+            # Send tool results back to Claude
+            self.messages.append({
+                "role": "user",
+                "content": tool_results
+            })
+    
+    async def cleanup(self):
+        """Close all MCP sessions."""
+        for server_name, server_data in self.mcp_sessions.items():
+            try:
+                await server_data['client'].__aexit__(None, None, None)
+                logger.info(f"✓ Closed {server_name} MCP session")
+            except Exception as e:
+                logger.error(f"✗ Error closing {server_name}: {e}")

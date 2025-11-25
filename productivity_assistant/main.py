@@ -1,75 +1,76 @@
+import asyncio
 import os
 import logging
-from productivity_assistant.agent import AssistantAgent
+from productivity_assistant.mcp_client import MCPClient # Import the renamed class
 from dotenv import load_dotenv
-from datetime import datetime, timedelta
 
 load_dotenv()
 
-def main():
-    # Ensure ANTHROPIC_API_KEY, GMAIL_MCP_URL, CALENDAR_MCP_URL, GOOGLE_CLIENT_SECRET_FILE are set in your .env file
-    if not os.getenv("ANTHROPIC_API_KEY"):
-        logging.error("ANTHROPIC_API_KEY not set in .env file.")
+logging.basicConfig(level=logging.INFO, format='%(levelname)s: %(message)s')
+
+async def main():
+    """Main function to run the agent."""
+    
+    # Centralized environment variable checks
+    required_env_vars = {
+        "ANTHROPIC_API_KEY": "Anthropic API Key",
+        "GOOGLE_API_CLIENT_SECRET_FILE": "Google API client_secret.json path",
+    }
+
+    missing_env_vars = []
+    for var, description in required_env_vars.items():
+        if not os.getenv(var):
+            missing_env_vars.append(description)
+    
+    if missing_env_vars:
+        logging.error(f"Missing environment variables. Please set the following in your .env file:")
+        for desc in missing_env_vars:
+            logging.error(f"- {desc}")
+        logging.error(f"Example .env file:")
+        logging.error(f"""
+# Anthropic API Key
+ANTHROPIC_API_KEY=sk-...
+# Google API client_secret.json path
+GOOGLE_API_CLIENT_SECRET_FILE=./client_secret.json
+""")
         return
-    if not os.getenv("GMAIL_MCP_URL"):
-        logging.error("GMAIL_MCP_URL not set in .env file. Cannot interact with Gmail.")
-    if not os.getenv("CALENDAR_MCP_URL"):
-        logging.error("CALENDAR_MCP_URL not set in .env file. Cannot interact with Calendar.")
-    if not os.getenv("GOOGLE_CLIENT_SECRET_FILE"):
-        logging.error("GOOGLE_CLIENT_SECRET_FILE not set in .env file. Cannot interact with Google APIs.")
 
-    agent = AssistantAgent()
-
-    print("--- Personal Assistant Agent Demo ---")
-
-    # Example 1: List emails
-    print("\nAttempting to list recent emails (max 5)...")
+    agent = MCPClient() # Instantiate MCPClient
+    
     try:
-        agent.run("list_emails", max_results=5)
-    except Exception as e:
-        print(f"Error listing emails: {e}")
-
-    # Example 2: Create a calendar event
-    print("\nAttempting to create a calendar event...")
-    try:
-        # Define start and end times for the event
-        now = datetime.now()
-        start_time_iso = (now + timedelta(days=1)).replace(hour=10, minute=0, second=0, microsecond=0).isoformat()
-        end_time_iso = (now + timedelta(days=1)).replace(hour=11, minute=0, second=0, microsecond=0).isoformat()
+        # Initialize MCP servers
+        await agent.initialize()
         
-        agent.run("create_calendar_event",
-                  summary="Gemini CLI Demo Meeting",
-                  description="Demo meeting created by Gemini CLI personal assistant agent.",
-                  start_time=start_time_iso,
-                  end_time=end_time_iso,
-                  timezone="America/Los_Angeles")
-    except Exception as e:
-        print(f"Error creating calendar event: {e}")
+        if not agent.mcp_sessions:
+            print("\n❌ No MCP servers initialized. Please check your server configurations.")
+            return
+        
+        print("\n" + "="*60)
+        print("MCP Agent Ready! Type 'quit' to exit.")
+        print("="*60 + "\n")
+        
+        # Interactive chat loop
+        while True:
+            user_input = input("You: ").strip()
+            
+            if user_input.lower() in ['quit', 'exit', 'q']:
+                break
+            
+            if not user_input:
+                continue
+            
+            print("\nClaude: ", end="", flush=True)
+            response = await agent.chat(user_input)
+            print(response)
+            print()
+    
+    except KeyboardInterrupt:
+        print("\n\nInterrupted by user")
+    
+    finally:
+        # Cleanup
+        await agent.cleanup()
 
-    # Example 3: List upcoming calendar events
-    print("\nAttempting to list upcoming calendar events...")
-    try:
-        agent.run("list_calendar_events", max_results=5)
-    except Exception as e:
-        print(f"Error listing calendar events: {e}")
-
-    # Example 4: Search for calendar events
-    print("\nAttempting to search for calendar events with 'Gemini CLI'...")
-    try:
-        agent.run("search_calendar_events", query="Gemini CLI", max_results=3)
-    except Exception as e:
-        print(f"Error searching calendar events: {e}")
-
-    # Example 5: Delete a calendar event (requires an event_id)
-    # To test this, uncomment and replace 'YOUR_EVENT_ID_HERE' with an actual event ID
-    # that you can get from list_calendar_events or search_calendar_events.
-    # print("\nAttempting to delete a calendar event...")
-    # try:
-    #     agent.run("delete_calendar_event", event_id="YOUR_EVENT_ID_HERE")
-    # except Exception as e:
-    #     print(f"Error deleting calendar event: {e}")
-
-    print("\n--- Demo Complete ---")
 
 if __name__ == "__main__":
-    main()
+    asyncio.run(main())
