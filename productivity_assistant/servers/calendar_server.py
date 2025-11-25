@@ -27,7 +27,7 @@ calendar_tool = CalendarTool(client_secret_file=GOOGLE_API_CLIENT_SECRET_FILE, c
 app.add_tool(
     calendar_tool.create_calendar_event,
     name='create-calendar-event',
-    description='Create a new calendar event with summary, description, start time, end time, and optional timezone.'
+    description='Create a new calendar event with summary, description, start time, end time, and optional attendees and timezone.'
 )
 
 app.add_tool(
@@ -46,5 +46,11 @@ app.add_tool(
     calendar_tool.delete_calendar_event,
     name='delete-calendar-event',
     description='Delete a calendar event by its event ID.'
+)
+
+app.add_tool(
+    calendar_tool.add_attendees_to_event,
+    name='add-attendees-to-event',
+    description='Add a list of attendees to an existing calendar event using the event ID.'
 )
 

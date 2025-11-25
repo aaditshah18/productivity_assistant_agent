@@ -25,7 +25,7 @@ class CalendarTool:
             )
         return self._service
 
-    def create_calendar_event(self, summary: str, description: str, start_time: str, end_time: str, timezone: str = 'America/Los_Angeles') -> str:
+    def create_calendar_event(self, summary: str, description: str, start_time: str, end_time: str, attendees: list[str] = None, timezone: str = 'America/Los_Angeles') -> str:
         """
         Creates a new calendar event.
 
@@ -34,6 +34,7 @@ class CalendarTool:
             description (str): Description of the event.
             start_time (str): Start time of the event in ISO format (e.g., '2025-12-25T09:00:00-07:00').
             end_time (str): End time of the event in ISO format (e.g., '2025-12-25T10:00:00-07:00').
+            attendees (list[str]): Optional list of attendee emails.
             timezone (str): Timezone for the event (e.g., 'America/Los_Angeles').
 
         Returns:
@@ -51,8 +52,11 @@ class CalendarTool:
                 'timeZone': timezone,
             },
         }
+        if attendees:
+            event['attendees'] = [{'email': email} for email in attendees]
+
         try:
-            event = self.service.events().insert(calendarId='primary', body=event).execute()
+            event = self.service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
             return json.dumps({"status": "success", "message": "Event created", "event_id": event.get('id'), "html_link": event.get('htmlLink')})
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
@@ -152,5 +156,46 @@ class CalendarTool:
         try:
             self.service.events().delete(calendarId='primary', eventId=event_id).execute()
             return json.dumps({"status": "success", "message": f"Event with ID '{event_id}' deleted successfully."})
+        except Exception as e:
+            return json.dumps({"status": "error", "message": str(e)})
+
+    def add_attendees_to_event(self, event_id: str, attendees: list[str]) -> str:
+        """
+        Adds attendees to an existing calendar event.
+
+        Args:
+            event_id (str): The ID of the event to update.
+            attendees (list[str]): A list of attendee emails to add.
+
+        Returns:
+            str: A JSON string indicating success or failure and event details.
+        """
+        try:
+            # First, get the existing event to preserve existing attendees
+            event = self.service.events().get(calendarId='primary', eventId=event_id).execute()
+
+            # Get the current list of attendees, or initialize a new list if none
+            current_attendees = event.get('attendees', [])
+            
+            # Add new attendees to the list
+            for email in attendees:
+                current_attendees.append({'email': email})
+
+            # Update the event with the new list of attendees
+            updated_event_body = {'attendees': current_attendees}
+            
+            updated_event = self.service.events().patch(
+                calendarId='primary',
+                eventId=event_id,
+                body=updated_event_body,
+                sendUpdates='all'
+            ).execute()
+
+            return json.dumps({
+                "status": "success",
+                "message": "Attendees added successfully",
+                "event_id": updated_event.get('id'),
+                "html_link": updated_event.get('htmlLink')
+            })
         except Exception as e:
             return json.dumps({"status": "error", "message": str(e)})
