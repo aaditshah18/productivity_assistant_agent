@@ -48,6 +48,3 @@ app.add_tool(
     description='Delete a calendar event by its event ID.'
 )
 
-
-if __name__ == '__main__':
-    app.run()
