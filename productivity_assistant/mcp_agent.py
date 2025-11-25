@@ -1,6 +1,6 @@
+from datetime import datetime
 import os
 import json
-import asyncio
 from typing import List, Dict, Any
 from anthropic import Anthropic
 from dotenv import load_dotenv
@@ -71,6 +71,8 @@ class MCPAgent:
     
     def chat(self, user_message: str) -> str:
         """Chat with Claude using MCP tools."""
+        current_date = datetime.now().strftime("%A, %B %d, %Y")
+        self.messages.append({"role": "assistant", "content": f"Current Date is {current_date}"})
         self.messages.append({"role": "user", "content": user_message})
         
         # Prepare tools for Claude (remove internal fields)

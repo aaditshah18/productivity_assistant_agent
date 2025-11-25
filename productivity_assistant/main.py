@@ -2,7 +2,6 @@ import gradio as gr
 import asyncio
 from productivity_assistant.mcp_agent import MCPAgent
 from dotenv import load_dotenv
-import os
 
 load_dotenv()
 
@@ -23,16 +22,18 @@ demo = gr.ChatInterface(
     examples=[
         "📧 Check my last 3 emails",
         "📅 What's on my calendar today?",
-        "🔍 Find emails from Gymshark",
         "📝 Create a meeting for tomorrow at 2pm",
         "🗓️ Show me my events this week"
     ],
     chatbot=gr.Chatbot(
-        height=500,
+        height=550,
         avatar_images=(
             "https://api.dicebear.com/9.x/lorelei/svg?seed=aadit",
             "https://api.dicebear.com/7.x/bottts/svg?seed=assistant"
-        )
+        ),
+        layout='panel',
+        render_markdown=True,
+        line_breaks=True,
     ),
 )
 
