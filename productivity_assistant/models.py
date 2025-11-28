@@ -66,3 +66,18 @@ class CalendarEvents(BaseModel):
     count: int = Field(..., description="The number of calendar events.")
     events: list[CalendarEvent] = Field(..., description="List of calendar events.")
     next_page_token: str | None = Field(..., description="Token for the next page of results.")
+
+class DeleteResult(BaseModel):
+    """Result of a delete operation"""
+    status: str
+    message: str
+
+class EmailItems(BaseModel):
+    """A list of emails"""
+    count: int
+    messages: list[EmailItem]
+
+class MessageBody(BaseModel):
+    """The body of an email message"""
+    status: str
+    body: str

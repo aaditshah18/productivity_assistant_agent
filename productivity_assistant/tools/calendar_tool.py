@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta
 import json
 
+from productivity_assistant.models import CalendarEvent, CalendarEvents, CalendarAddResult, DeleteResult
+
 class CalendarTool:
     API_NAME = 'calendar'
     API_VERSION = 'v3'
@@ -25,7 +27,7 @@ class CalendarTool:
             )
         return self._service
 
-    def create_calendar_event(self, summary: str, description: str, start_time: str, end_time: str, attendees: list[str] = None, timezone: str = 'America/Los_Angeles') -> str:
+    def create_calendar_event(self, summary: str, description: str, start_time: str, end_time: str, attendees: list[str] = None, timezone: str = 'America/Los_Angeles') -> CalendarAddResult:
         """
         Creates a new calendar event.
 
@@ -38,7 +40,7 @@ class CalendarTool:
             timezone (str): Timezone for the event (e.g., 'America/Los_Angeles').
 
         Returns:
-            str: A JSON string indicating success or failure and event details.
+            CalendarAddResult: A Pydantic model indicating success or failure and event details.
         """
         event = {
             'summary': summary,
@@ -57,11 +59,11 @@ class CalendarTool:
 
         try:
             event = self.service.events().insert(calendarId='primary', body=event, sendUpdates='all').execute()
-            return json.dumps({"status": "success", "message": "Event created", "event_id": event.get('id'), "html_link": event.get('htmlLink')})
+            return CalendarAddResult(event_id=event.get('id'), success=True, message="Event created")
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return CalendarAddResult(event_id="", success=False, message=str(e))
 
-    def list_calendar_events(self, max_results: int = 10, time_min: str = None, time_max: str = None) -> str:
+    def list_calendar_events(self, max_results: int = 10, time_min: str = None, time_max: str = None) -> CalendarEvents:
         """
         Lists upcoming calendar events.
 
@@ -71,7 +73,7 @@ class CalendarTool:
             time_max (str): End time for the query in ISO format. Defaults to 7 days from now.
 
         Returns:
-            str: A JSON string of upcoming events.
+            CalendarEvents: A Pydantic model of upcoming events.
         """
         now = datetime.utcnow().isoformat() + 'Z' # 'Z' indicates UTC time
         if not time_min:
@@ -89,24 +91,43 @@ class CalendarTool:
                 orderBy='startTime'
             ).execute()
             events = events_result.get('items', [])
+            next_page_token = events_result.get('nextPageToken')
 
             if not events:
-                return json.dumps({"status": "success", "message": "No upcoming events found."})
-            
-            events_list = []
-            for event in events:
-                start = event['start'].get('dateTime', event['start'].get('date'))
-                events_list.append({
-                    "id": event['id'],
-                    "summary": event['summary'],
-                    "start": start,
-                    "html_link": event['htmlLink']
-                })
-            return json.dumps({"status": "success", "events": events_list})
-        except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+                return CalendarEvents(count=0, events=[], next_page_token=None)
 
-    def search_calendar_events(self, query: str, max_results: int = 10) -> str:
+            events_list = []
+            for event_data in events:
+                # Ensure organizer and attendees are handled correctly
+                organizer = event_data.get('organizer', {})
+                attendees_data = event_data.get('attendees', [])
+
+                # Create CalendarEvent instance with proper validation
+                event = CalendarEvent(
+                    id=event_data.get('id'),
+                    name=event_data.get('summary', 'No Title'),
+                    status=event_data.get('status'),
+                    description=event_data.get('description'),
+                    html_link=event_data.get('htmlLink'),
+                    created=event_data.get('created'),
+                    updated=event_data.get('updated'),
+                    organizer_name=organizer.get('displayName', organizer.get('email')),
+                    organizer_email=organizer.get('email'),
+                    start_time=event_data.get('start', {}).get('dateTime'),
+                    end_time=event_data.get('end', {}).get('dateTime'),
+                    location=event_data.get('location'),
+                    time_zone=event_data.get('start', {}).get('timeZone'),
+                    attendees=[{'email': att.get('email'), 'display_name': att.get('displayName'), 'response_status': att.get('responseStatus')} for att in attendees_data]
+                )
+                events_list.append(event)
+            
+            return CalendarEvents(count=len(events_list), events=events_list, next_page_token=next_page_token)
+        except Exception as e:
+            # For simplicity, returning an empty list on error. 
+            # In a real app, you'd want more robust error handling.
+            return CalendarEvents(count=0, events=[], next_page_token=None)
+
+    def search_calendar_events(self, query: str, max_results: int = 10) -> CalendarEvents:
         """
         Searches for calendar events matching a query.
 
@@ -115,7 +136,7 @@ class CalendarTool:
             max_results (int): Maximum number of events to return.
 
         Returns:
-            str: A JSON string of matching events.
+            CalendarEvents: A Pydantic model of matching events.
         """
         try:
             events_result = self.service.events().list(
@@ -126,24 +147,38 @@ class CalendarTool:
                 orderBy='startTime'
             ).execute()
             events = events_result.get('items', [])
+            next_page_token = events_result.get('nextPageToken')
 
             if not events:
-                return json.dumps({"status": "success", "message": f"No events found matching '{query}'."})
+                return CalendarEvents(count=0, events=[], next_page_token=None)
             
             events_list = []
-            for event in events:
-                start = event['start'].get('dateTime', event['start'].get('date'))
-                events_list.append({
-                    "id": event['id'],
-                    "summary": event['summary'],
-                    "start": start,
-                    "html_link": event['htmlLink']
-                })
-            return json.dumps({"status": "success", "events": events_list})
-        except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            for event_data in events:
+                organizer = event_data.get('organizer', {})
+                attendees_data = event_data.get('attendees', [])
+                event = CalendarEvent(
+                    id=event_data.get('id'),
+                    name=event_data.get('summary', 'No Title'),
+                    status=event_data.get('status'),
+                    description=event_data.get('description'),
+                    html_link=event_data.get('htmlLink'),
+                    created=event_data.get('created'),
+                    updated=event_data.get('updated'),
+                    organizer_name=organizer.get('displayName', organizer.get('email')),
+                    organizer_email=organizer.get('email'),
+                    start_time=event_data.get('start', {}).get('dateTime'),
+                    end_time=event_data.get('end', {}).get('dateTime'),
+                    location=event_data.get('location'),
+                    time_zone=event_data.get('start', {}).get('timeZone'),
+                    attendees=[{'email': att.get('email'), 'display_name': att.get('displayName'), 'response_status': att.get('responseStatus')} for att in attendees_data]
+                )
+                events_list.append(event)
 
-    def delete_calendar_event(self, event_id: str) -> str:
+            return CalendarEvents(count=len(events_list), events=events_list, next_page_token=next_page_token)
+        except Exception as e:
+            return CalendarEvents(count=0, events=[], next_page_token=None)
+
+    def delete_calendar_event(self, event_id: str) -> DeleteResult:
         """
         Deletes a calendar event by its ID.
 
@@ -151,15 +186,15 @@ class CalendarTool:
             event_id (str): The ID of the event to delete.
 
         Returns:
-            str: A JSON string indicating success or failure.
+            DeleteResult: A Pydantic model indicating success or failure.
         """
         try:
             self.service.events().delete(calendarId='primary', eventId=event_id).execute()
-            return json.dumps({"status": "success", "message": f"Event with ID '{event_id}' deleted successfully."})
+            return DeleteResult(status="success", message=f"Event with ID '{event_id}' deleted successfully.")
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return DeleteResult(status="error", message=str(e))
 
-    def add_attendees_to_event(self, event_id: str, attendees: list[str]) -> str:
+    def add_attendees_to_event(self, event_id: str, attendees: list[str]) -> CalendarAddResult:
         """
         Adds attendees to an existing calendar event.
 
@@ -168,7 +203,7 @@ class CalendarTool:
             attendees (list[str]): A list of attendee emails to add.
 
         Returns:
-            str: A JSON string indicating success or failure and event details.
+            CalendarAddResult: A Pydantic model indicating success or failure and event details.
         """
         try:
             # First, get the existing event to preserve existing attendees
@@ -191,11 +226,6 @@ class CalendarTool:
                 sendUpdates='all'
             ).execute()
 
-            return json.dumps({
-                "status": "success",
-                "message": "Attendees added successfully",
-                "event_id": updated_event.get('id'),
-                "html_link": updated_event.get('htmlLink')
-            })
+            return CalendarAddResult(event_id=updated_event.get('id'), success=True, message="Attendees added successfully")
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return CalendarAddResult(event_id=event_id, success=False, message=str(e))

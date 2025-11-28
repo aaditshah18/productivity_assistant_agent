@@ -14,3 +14,6 @@ wheels/
 
 # Auth Token
 *.json
+
+# macOS generated files
+.DS_Store

@@ -5,6 +5,7 @@ from typing import List, Dict, Any
 from anthropic import Anthropic
 from dotenv import load_dotenv
 import logging
+from pydantic import BaseModel
 
 # Direct imports of your MCP servers
 from productivity_assistant.servers.calendar_server import app as calendar_app
@@ -120,12 +121,18 @@ class MCPAgent:
                 tool_func = self.tool_map[tool_name]['func']
                 result = tool_func(**tool_input)
                 
-                logger.info(f"   Result: {result[:200]}...")
+                # Handle Pydantic models by serializing them
+                if isinstance(result, BaseModel):
+                    content = result.model_dump_json(indent=2)
+                    logger.info(f"   Result: {content[:200]}...")
+                else:
+                    content = str(result)
+                    logger.info(f"   Result: {content[:200]}...")
                 
                 tool_results.append({
                     "type": "tool_result",
                     "tool_use_id": tool_block.id,
-                    "content": result
+                    "content": content
                 })
             
             # Send results back

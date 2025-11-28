@@ -1,5 +1,7 @@
 import json
 import base64
+from datetime import datetime
+from productivity_assistant.models import EmailItem, EmailItems, MessageBody
 
 class GmailTool:
     API_NAME = 'gmail'
@@ -23,7 +25,7 @@ class GmailTool:
             )
         return self._service
 
-    def list_messages(self, max_results: int = 10, query: str = '') -> str:
+    def list_messages(self, max_results: int = 10, query: str = '') -> 'EmailItems':
         """
         Lists messages from the user's Gmail inbox.
 
@@ -32,7 +34,7 @@ class GmailTool:
             query (str): Optional Gmail search query (e.g., "from:sender@example.com subject:important").
 
         Returns:
-            str: A JSON string of message metadata.
+            EmailItems: A Pydantic model of message metadata.
         """
         try:
             response = self.service.users().messages().list(userId='me', q=query, maxResults=max_results).execute()
@@ -45,20 +47,33 @@ class GmailTool:
                 
                 subject = next((h['value'] for h in headers if h['name'] == 'Subject'), 'No Subject')
                 sender = next((h['value'] for h in headers if h['name'] == 'From'), 'Unknown Sender')
-                date = next((h['value'] for h in headers if h['name'] == 'Date'), 'Unknown Date')
+                date_str = next((h['value'] for h in headers if h['name'] == 'Date'), None)
+                
+                # Robust date parsing
+                if date_str:
+                    try:
+                        # Remove timezone name in parentheses
+                        if ' (' in date_str:
+                            date_str = date_str.split(' (')[0]
+                        date = datetime.strptime(date_str.strip(), '%a, %d %b %Y %H:%M:%S %z')
+                    except ValueError:
+                        date = datetime.now() # Fallback
+                else:
+                    date = datetime.now()
 
-                messages_list.append({
-                    "id": msg['id'],
-                    "subject": subject,
-                    "sender": sender,
-                    "date": date,
-                    "snippet": msg_data.get('snippet', '')
-                })
-            return json.dumps({"status": "success", "messages": messages_list})
+
+                messages_list.append(EmailItem(
+                    id=msg['id'],
+                    subject=subject,
+                    sender=sender,
+                    date=date,
+                    body=msg_data.get('snippet', '')
+                ))
+            return EmailItems(count=len(messages_list), messages=messages_list)
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return EmailItems(count=0, messages=[])
 
-    def get_message_body(self, message_id: str) -> str:
+    def get_message_body(self, message_id: str) -> 'MessageBody':
         """
         Retrieves the full body of a specific message.
 
@@ -66,7 +81,7 @@ class GmailTool:
             message_id (str): The ID of the message to retrieve.
 
         Returns:
-            str: A JSON string containing the message body (plain text, HTML, or raw).
+            MessageBody: A Pydantic model containing the message body.
         """
         try:
             message = self.service.users().messages().get(userId='me', id=message_id, format='full').execute()
@@ -86,9 +101,9 @@ class GmailTool:
                 body_parts.append(decode_data(payload['body']['data']))
 
             if body_parts:
-                return json.dumps({"status": "success", "body": "\n".join(body_parts)})
+                return MessageBody(status="success", body="\n".join(body_parts))
             else:
-                return json.dumps({"status": "success", "body": "No plain text body found."})
+                return MessageBody(status="success", body="No plain text body found.")
 
         except Exception as e:
-            return json.dumps({"status": "error", "message": str(e)})
+            return MessageBody(status="error", body=str(e))
